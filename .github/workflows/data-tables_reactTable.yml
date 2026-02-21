@@ -40,6 +40,13 @@ jobs:
           cd server
           npm ci --omit=dev
           cd ..
+      - name: Ensure specific prod packages installed
+        run: |
+          cd server
+          echo "Installing missing runtime packages explicitly"
+          npm install --omit=dev --no-audit --no-fund cors @databricks/sql || true
+          ls -la node_modules | sed -n '1,200p' || true
+          cd ..
       - name: Verify server production dependencies
         run: |
           echo "=== server/node_modules ==="
