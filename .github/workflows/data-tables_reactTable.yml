@@ -20,7 +20,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      # Use npm install (not npm ci) until your lockfile is fully stable
       - name: Install monorepo dependencies
         run: npm install
 
@@ -36,7 +35,7 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Install runtime deps directly into server/node_modules (avoid workspace hoisting)
+      # Install runtime deps into server/node_modules
       - name: Install server production dependencies into server/
         run: |
           rm -rf server/node_modules
@@ -47,13 +46,17 @@ jobs:
           ls -d server/node_modules/express
           ls -d server/node_modules/@databricks/sql
 
-      # IMPORTANT: remove any tarball so App Service doesn't override node_modules
+      # IMPORTANT: do NOT deploy .env (use Azure App Settings)
+      - name: Remove .env from deployment content
+        run: |
+          rm -f server/.env
+
+      # Ensure no tarballs are shipped
       - name: Remove any node_modules tarballs from server folder
         run: |
           rm -f server/node_modules.tar.gz
           rm -f server/node_modules.zip || true
 
-      # CRITICAL: zip FROM INSIDE server so zip root contains package.json/dist/node_modules/public
       - name: Create deployment zip (server root)
         run: |
           rm -f server.zip
@@ -61,11 +64,9 @@ jobs:
           zip -r ../server.zip .
           cd ..
 
-      # Proof: show zip layout (first 30 lines)
       - name: Show zip root layout (proof)
-        run: unzip -l server.zip | head -n 30
+        run: unzip -l server.zip | head -n 40
 
-      # Proof: confirm cors exists inside zip
       - name: Verify zip contains cors + express (proof)
         run: |
           unzip -l server.zip | grep -E "node_modules/cors/" | head -n 5
@@ -98,7 +99,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Proof: confirm the exact target site you are deploying to
       - name: Show target webapp info (proof)
         run: |
           az webapp show \
@@ -106,16 +106,6 @@ jobs:
             --resource-group reactweb \
             --query "{name:name, state:state, hostNames:hostNames}" \
             -o json
-
-      # IMPORTANT: ensure App Service doesn't use stale tarball-based node_modules from old deployments
-      # If SSH is disabled in your App Service, this step may fail — you can remove it if needed.
-      - name: Remove stale node_modules.tar.gz on server (best-effort)
-        continue-on-error: true
-        run: |
-          az webapp ssh \
-            --name reactTable \
-            --resource-group reactweb \
-            --command "cd /home/site/wwwroot && rm -f node_modules.tar.gz && rm -f node_modules.zip && ls -la | head -n 50"
 
       - name: Configure App Settings + Startup Command
         run: |
@@ -140,6 +130,25 @@ jobs:
           app-name: "reactTable"
           slot-name: "Production"
           package: server.zip
+
+      # Kudu cleanup + proof (requires AZURE_WEBAPP_PUBLISH_PROFILE secret)
+      - name: Kudu cleanup stale node_modules tarball + verify cors exists
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          USER=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userName="\([^"]*\)".*/\1/p' | head -n 1)
+          PASS=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' | head -n 1)
+          KUDU="https://reacttable-bzfsgqd6c2etekgf.scm.azurewebsites.net"
+
+          echo "Deleting any stale tarballs that can override node_modules..."
+          curl -s -X DELETE -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules.tar.gz" || true
+          curl -s -X DELETE -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules.zip" || true
+
+          echo "Listing wwwroot (top):"
+          curl -s -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/" | head -n 80 || true
+
+          echo "Checking cors folder:"
+          curl -s -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules/cors/" | head -n 50 || true
 
       - name: Restart web app
         run: az webapp restart --name reactTable --resource-group reactweb
