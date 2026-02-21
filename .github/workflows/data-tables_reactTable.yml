@@ -21,7 +21,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies (monorepo)
-        run: npm ci
+        run: npm install
 
       - name: Build server (TypeScript -> dist)
         run: npm run build -w server
@@ -34,33 +34,23 @@ jobs:
           rm -rf server/public
           mkdir -p server/public
           cp -R client/dist/* server/public/
-      # Install ONLY production deps in server so runtime has express, etc.
-      - name: Install server production dependencies
+
+      # Force a real prod install into server/node_modules (no workspace hoisting)
+      - name: Install server production deps into server/node_modules
         run: |
-          cd server
-          npm ci --omit=dev
-          cd ..
-      - name: Ensure specific prod packages installed
-        run: |
-          cd server
-          echo "Installing missing runtime packages explicitly"
-          npm install --omit=dev --no-audit --no-fund cors @databricks/sql || true
-          ls -la node_modules | sed -n '1,200p' || true
-          cd ..
-      - name: Verify server production dependencies
-        run: |
-          echo "=== server/node_modules ==="
-          ls -la server/node_modules || true
-          echo "=== check specific packages ==="
-          [ -d server/node_modules/cors ] && echo "cors: OK" || echo "cors: MISSING"
-          [ -d server/node_modules/express ] && echo "express: OK" || echo "express: MISSING"
-          [ -d server/node_modules/@databricks/sql ] && echo "@databricks/sql: OK" || echo "@databricks/sql: MISSING"
-      # Create zip from inside server folder (includes node_modules + dist + public + package.json)
-      - name: Create deployment zip (server)
+          rm -rf server/node_modules
+          npm install --omit=dev --prefix server --workspaces=false
+          ls -d server/node_modules/cors
+          ls -d server/node_modules/express
+          ls -d server/node_modules/@databricks/sql
+
+      # Zip server INCLUDING node_modules (reliable on App Service)
+      - name: Create deployment zip (server includes node_modules)
         run: |
           cd server
           zip -r ../server.zip .
           cd ..
+
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
         with:
@@ -80,7 +70,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: server-zip
-          path: server-zip
 
       - name: Login to Azure (OIDC)
         uses: azure/login@v2
@@ -96,23 +85,20 @@ jobs:
             --resource-group reactweb \
             --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=false \
-              WEBSITE_NODE_DEFAULT_VERSION=20-lts \
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
               DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
-          # Start from /home/site/wwwroot (zip root)
+
           az webapp config set \
             --name reactTable \
             --resource-group reactweb \
             --startup-file "npm start"
 
-      - name: Verify downloaded artifact
-        run: |
-            ls -la server-zip || true
-            unzip -l server-zip/server.zip | sed -n '1,120p' || true
+          az webapp restart --name reactTable --resource-group reactweb
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: "reactTable"
           slot-name: "Production"
-          package: server-zip/server.zip
+          package: server.zip
