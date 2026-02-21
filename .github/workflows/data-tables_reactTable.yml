@@ -20,6 +20,7 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      # Install workspace deps for building (uses root package-lock.json)
       - name: Install dependencies (monorepo)
         run: npm ci
 
@@ -35,19 +36,24 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Install ONLY production deps in server so runtime has express, etc.
-      - name: Install server production dependencies
+      # CRITICAL: install prod deps INTO server/node_modules (avoid workspace hoisting)
+      - name: Install server production dependencies (force local node_modules)
         run: |
-          cd server
-          npm ci --omit=dev
-          cd ..
+          rm -rf server/node_modules
+          npm install --omit=dev --prefix server --workspaces=false
+          test -d server/node_modules/cors
+          test -d server/node_modules/express
 
-      # Create zip from inside server folder (includes node_modules + dist + public + package.json)
       - name: Create deployment zip (server)
         run: |
           cd server
           zip -r ../server.zip .
           cd ..
+
+      # Sanity check: ensure node_modules are actually inside the zip
+      - name: Verify zip contains runtime deps
+        run: |
+          unzip -l server.zip | grep -E "node_modules/(cors|express)/" | head -n 50
 
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
@@ -88,7 +94,6 @@ jobs:
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
               DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
 
-          # Start from /home/site/wwwroot (zip root)
           az webapp config set \
             --name reactTable \
             --resource-group reactweb \
