@@ -89,9 +89,14 @@ jobs:
             --name reactTable \
             --resource-group reactweb \
             --startup-file "npm start"
+
+      - name: Verify downloaded artifact
+        run: |
+            ls -la server-zip || true
+            unzip -l server-zip/server.zip | sed -n '1,120p' || true
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: "reactTable"
           slot-name: "Production"
-          package: server.zip
+          package: server-zip/server.zip
