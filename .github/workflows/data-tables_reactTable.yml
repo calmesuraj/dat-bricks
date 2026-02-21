@@ -40,6 +40,14 @@ jobs:
           cd server
           npm ci --omit=dev
           cd ..
+      - name: Verify server production dependencies
+        run: |
+          echo "=== server/node_modules ==="
+          ls -la server/node_modules || true
+          echo "=== check specific packages ==="
+          [ -d server/node_modules/cors ] && echo "cors: OK" || echo "cors: MISSING"
+          [ -d server/node_modules/express ] && echo "express: OK" || echo "express: MISSING"
+          [ -d server/node_modules/@databricks/sql ] && echo "@databricks/sql: OK" || echo "@databricks/sql: MISSING"
       # Create zip from inside server folder (includes node_modules + dist + public + package.json)
       - name: Create deployment zip (server)
         run: |
