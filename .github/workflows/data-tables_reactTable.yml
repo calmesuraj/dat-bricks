@@ -20,7 +20,7 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      # Install using the root lockfile (required for npm workspaces)
+      # Install workspace deps using root lockfile
       - name: Install dependencies (monorepo)
         run: npm ci
 
@@ -36,23 +36,43 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Remove dev deps after build so node_modules tarball is production-sized
-      - name: Prune to production deps (workspace root)
-        run: npm prune --omit=dev
+      # Create a clean, production-only node_modules for the SERVER workspace
+      # This avoids workspace symlinks/hoisting issues.
+      - name: Create production node_modules for server (workspace-safe)
+        run: |
+          rm -rf .server_prod
+          mkdir -p .server_prod
 
-      # Create node_modules.tar.gz that App Service will auto-extract at startup
-      - name: Create node_modules tarball for App Service
+          # Copy only what's needed for runtime install
+          cp server/package.json .server_prod/package.json
+
+          # If server has its own lockfile, use it; otherwise use root lockfile for deterministic versions
+          if [ -f server/package-lock.json ]; then
+            cp server/package-lock.json .server_prod/package-lock.json
+          else
+            cp package-lock.json .server_prod/package-lock.json
+          fi
+
+          # Install prod deps into .server_prod/node_modules
+          npm ci --omit=dev --prefix .server_prod
+
+          # Hard checks: must exist
+          test -d .server_prod/node_modules/express
+          test -d .server_prod/node_modules/cors
+          test -d .server_prod/node_modules/@databricks/sql
+
+      # Pack that production node_modules as node_modules.tar.gz INSIDE server/
+      - name: Create node_modules.tar.gz for App Service
         run: |
           rm -f server/node_modules.tar.gz
-          tar -czf server/node_modules.tar.gz node_modules
-          test -f server/node_modules.tar.gz
+          tar -czf server/node_modules.tar.gz -C .server_prod node_modules
 
-          # Sanity checks: ensure required runtime deps are inside the tarball
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors/" -m 1
+          # Verify tarball contains required deps
           tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express/" -m 1
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors/" -m 1
           tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql/" -m 1
 
-      # Zip only the server app (include node_modules.tar.gz, exclude any node_modules dir)
+      # Zip server contents; exclude any node_modules dir (we only need the tarball)
       - name: Create deployment zip (server)
         run: |
           cd server
@@ -107,7 +127,6 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
-          # Apply Node version setting immediately
           az webapp restart --name reactTable --resource-group reactweb
 
       - name: Deploy to Azure Web App
