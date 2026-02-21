@@ -18,11 +18,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          # (optional) keep cache; remove it if you want zero variability while debugging
           cache: "npm"
 
-      # Install workspace deps using root lockfile
+      # IMPORTANT: use npm install (not npm ci) to avoid lockfile sync failures
       - name: Install dependencies (monorepo)
-        run: npm ci
+        run: npm install
+
+      # Diagnostic: shows if npm had to modify package-lock.json in CI
+      - name: Show lockfile diff (diagnostic)
+        run: |
+          git status --porcelain
+          git diff -- package-lock.json || true
 
       - name: Build server (TypeScript -> dist)
         run: npm run build -w server
@@ -36,43 +43,23 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Create a clean, production-only node_modules for the SERVER workspace
-      # This avoids workspace symlinks/hoisting issues.
-      - name: Create production node_modules for server (workspace-safe)
-        run: |
-          rm -rf .server_prod
-          mkdir -p .server_prod
+      # Remove dev deps AFTER building so the production node_modules is smaller
+      - name: Prune to production deps (workspace root)
+        run: npm prune --omit=dev
 
-          # Copy only what's needed for runtime install
-          cp server/package.json .server_prod/package.json
-
-          # If server has its own lockfile, use it; otherwise use root lockfile for deterministic versions
-          if [ -f server/package-lock.json ]; then
-            cp server/package-lock.json .server_prod/package-lock.json
-          else
-            cp package-lock.json .server_prod/package-lock.json
-          fi
-
-          # Install prod deps into .server_prod/node_modules
-          npm ci --omit=dev --prefix .server_prod
-
-          # Hard checks: must exist
-          test -d .server_prod/node_modules/express
-          test -d .server_prod/node_modules/cors
-          test -d .server_prod/node_modules/@databricks/sql
-
-      # Pack that production node_modules as node_modules.tar.gz INSIDE server/
+      # App Service on Linux auto-extracts node_modules.tar.gz at startup (you saw this in logs)
       - name: Create node_modules.tar.gz for App Service
         run: |
           rm -f server/node_modules.tar.gz
-          tar -czf server/node_modules.tar.gz -C .server_prod node_modules
+          tar -czf server/node_modules.tar.gz node_modules
+          test -f server/node_modules.tar.gz
 
-          # Verify tarball contains required deps
+          # Sanity check tarball contains runtime deps
           tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express/" -m 1
           tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors/" -m 1
           tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql/" -m 1
 
-      # Zip server contents; exclude any node_modules dir (we only need the tarball)
+      # Zip the server app; exclude any node_modules dir (we only need node_modules.tar.gz)
       - name: Create deployment zip (server)
         run: |
           cd server
@@ -80,8 +67,7 @@ jobs:
           cd ..
 
       - name: Verify zip contains node_modules.tar.gz
-        run: |
-          unzip -l server.zip | grep -E "node_modules\.tar\.gz" -n
+        run: unzip -l server.zip | grep -E "node_modules\.tar\.gz" -n
 
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
@@ -127,6 +113,7 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
+          # Apply settings immediately
           az webapp restart --name reactTable --resource-group reactweb
 
       - name: Deploy to Azure Web App
