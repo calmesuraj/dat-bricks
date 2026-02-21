@@ -105,3 +105,9 @@ jobs:
           app-name: "reactTable"
           slot-name: "Production"
           package: server.zip
+
+      - name: Verify server runtime deps exist
+        run: |
+         test -d server/node_modules/cors
+         test -d server/node_modules/express
+         test -d server/node_modules/@databricks/sql
