@@ -18,10 +18,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
+          # TEMP: disable cache while fixing rollup optional-deps issue
+          # cache: "npm"
 
-      - name: Install monorepo dependencies
-        run: npm install
+      # Option A (preferred): npm ci (requires package-lock.json in sync)
+      - name: Install monorepo dependencies (clean, include optional)
+        run: |
+          rm -rf node_modules
+          npm ci --include=optional
+
+      # Option B (use this instead if npm ci fails due to lockfile drift)
+      # - name: Install monorepo dependencies (include optional)
+      #   run: |
+      #     rm -rf node_modules package-lock.json
+      #     npm install --include=optional
+
+      - name: Debug rollup optional package (proof)
+        run: |
+          ls -la node_modules/@rollup || true
+          node -e "try{require('@rollup/rollup-linux-x64-gnu'); console.log('rollup linux native: OK')}catch(e){console.error('rollup linux native: MISSING'); process.exit(1)}"
 
       - name: Build server
         run: npm run build -w server
@@ -48,8 +63,7 @@ jobs:
 
       # IMPORTANT: do NOT deploy .env (use Azure App Settings)
       - name: Remove .env from deployment content
-        run: |
-          rm -f server/.env
+        run: rm -f server/.env
 
       # Ensure no tarballs are shipped
       - name: Remove any node_modules tarballs from server folder
@@ -131,7 +145,6 @@ jobs:
           slot-name: "Production"
           package: server.zip
 
-      # Kudu cleanup + proof (requires AZURE_WEBAPP_PUBLISH_PROFILE secret)
       - name: Kudu cleanup stale node_modules tarball + verify cors exists
         env:
           PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
@@ -140,15 +153,10 @@ jobs:
           PASS=$(echo "$PUBLISH_PROFILE" | sed -n 's/.*userPWD="\([^"]*\)".*/\1/p' | head -n 1)
           KUDU="https://reacttable-bzfsgqd6c2etekgf.scm.azurewebsites.net"
 
-          echo "Deleting any stale tarballs that can override node_modules..."
           curl -s -X DELETE -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules.tar.gz" || true
           curl -s -X DELETE -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules.zip" || true
 
-          echo "Listing wwwroot (top):"
-          curl -s -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/" | head -n 80 || true
-
-          echo "Checking cors folder:"
-          curl -s -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules/cors/" | head -n 50 || true
+          curl -s -u "$USER:$PASS" "$KUDU/api/vfs/site/wwwroot/node_modules/cors/" | head -n 20 || true
 
       - name: Restart web app
         run: az webapp restart --name reactTable --resource-group reactweb
