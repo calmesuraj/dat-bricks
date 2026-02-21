@@ -25,6 +25,12 @@ jobs:
       - name: Install dependencies (monorepo)
         run: npm install
 
+        
+      - name: "Debug: show node_modules contents"
+        run: |
+          echo "Listing node_modules..."
+          ls -la node_modules | head -n 50 
+          
       # Diagnostic: shows if npm had to modify package-lock.json in CI
       - name: Show lockfile diff (diagnostic)
         run: |
