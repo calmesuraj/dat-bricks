@@ -18,14 +18,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies (monorepo)
-        run: npm install
+        run: npm ci
 
-      - name: Build server
+      - name: Build server (TypeScript -> dist)
         run: npm run build -w server
 
-      - name: Build client
+      - name: Build client (Vite -> client/dist)
         run: npm run build -w client
 
       - name: Copy client dist into server/public
@@ -34,17 +35,18 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # IMPORTANT: ensure no old tarballs are inside server
-      - name: Remove any old node_modules tarballs
+      # Install ONLY production deps in server so runtime has express, etc.
+      - name: Install server production dependencies
         run: |
-          rm -f server/node_modules.tar.gz || true
-          rm -f server/node_modules.zip || true
+          cd server
+          npm ci --omit=dev
+          cd ..
 
-      # Create zip from inside server folder
+      # Create zip from inside server folder (includes node_modules + dist + public + package.json)
       - name: Create deployment zip (server)
         run: |
           cd server
-          zip -r ../server.zip . -x "**/node_modules/**"
+          zip -r ../server.zip .
           cd ..
 
       - name: Upload artifact for deployment
@@ -80,12 +82,13 @@ jobs:
             --name reactTable \
             --resource-group reactweb \
             --settings \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+              WEBSITE_NODE_DEFAULT_VERSION=20-lts \
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
               DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
 
-          # Ensures Azure starts the server from your app root
+          # Start from /home/site/wwwroot (zip root)
           az webapp config set \
             --name reactTable \
             --resource-group reactweb \
