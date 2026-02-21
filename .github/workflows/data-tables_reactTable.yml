@@ -20,15 +20,8 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      # Use npm install (not npm ci) because your lockfile is not stable/synced yet
       - name: Install dependencies (monorepo)
-        run: npm install
-
-      # Optional: show if npm modified package-lock.json in CI
-      - name: Lockfile diagnostic
-        run: |
-          git status --porcelain
-          git diff -- package-lock.json || true
+        run: npm ci
 
       - name: Build server (TypeScript -> dist)
         run: npm run build -w server
@@ -41,39 +34,18 @@ jobs:
           rm -rf server/public
           mkdir -p server/public
           cp -R client/dist/* server/public/
-
-      # CRITICAL: install production deps INSIDE server/ so server/node_modules has express/cors/@databricks/sql
-      # (Root node_modules may not contain express in your workspace layout)
-      - name: Install server production dependencies (in server folder)
+      # Install ONLY production deps in server so runtime has express, etc.
+      - name: Install server production dependencies
         run: |
           cd server
-          rm -rf node_modules
-          npm install --omit=dev
-          test -d node_modules/express
-          test -d node_modules/cors
-          test -d node_modules/@databricks/sql
+          npm ci --omit=dev
           cd ..
-
-      # App Service on Linux auto-extracts node_modules.tar.gz at startup (your logs show this)
-      - name: Create node_modules.tar.gz for App Service (from server)
-        run: |
-          rm -f server/node_modules.tar.gz
-          tar -czf server/node_modules.tar.gz -C server node_modules
-          test -f server/node_modules.tar.gz
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express($|/)" -m 1
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors($|/)" -m 1
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql($|/)" -m 1
-
-      # Zip the server app; exclude node_modules directory (we only need node_modules.tar.gz)
+      # Create zip from inside server folder (includes node_modules + dist + public + package.json)
       - name: Create deployment zip (server)
         run: |
           cd server
-          zip -r ../server.zip . -x "node_modules/**"
+          zip -r ../server.zip .
           cd ..
-
-      - name: Verify zip contains node_modules.tar.gz
-        run: unzip -l server.zip | grep -E "node_modules\.tar\.gz" -n
-
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
         with:
@@ -112,14 +84,11 @@ jobs:
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
               DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
-
+          # Start from /home/site/wwwroot (zip root)
           az webapp config set \
             --name reactTable \
             --resource-group reactweb \
             --startup-file "npm start"
-
-          az webapp restart --name reactTable --resource-group reactweb
-
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
