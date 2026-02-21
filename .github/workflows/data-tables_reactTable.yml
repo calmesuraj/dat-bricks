@@ -20,7 +20,7 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      # Install workspace deps for building (uses root package-lock.json)
+      # Install using the root lockfile (required for npm workspaces)
       - name: Install dependencies (monorepo)
         run: npm ci
 
@@ -36,24 +36,32 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # CRITICAL: install prod deps INTO server/node_modules (avoid workspace hoisting)
-      - name: Install server production dependencies (force local node_modules)
-        run: |
-          rm -rf server/node_modules
-          npm install --omit=dev --prefix server --workspaces=false
-          test -d server/node_modules/cors
-          test -d server/node_modules/express
+      # Remove dev deps after build so node_modules tarball is production-sized
+      - name: Prune to production deps (workspace root)
+        run: npm prune --omit=dev
 
+      # Create node_modules.tar.gz that App Service will auto-extract at startup
+      - name: Create node_modules tarball for App Service
+        run: |
+          rm -f server/node_modules.tar.gz
+          tar -czf server/node_modules.tar.gz node_modules
+          test -f server/node_modules.tar.gz
+
+          # Sanity checks: ensure required runtime deps are inside the tarball
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors/" -m 1
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express/" -m 1
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql/" -m 1
+
+      # Zip only the server app (include node_modules.tar.gz, exclude any node_modules dir)
       - name: Create deployment zip (server)
         run: |
           cd server
-          zip -r ../server.zip .
+          zip -r ../server.zip . -x "node_modules/**"
           cd ..
 
-      # Sanity check: ensure node_modules are actually inside the zip
-      - name: Verify zip contains runtime deps
+      - name: Verify zip contains node_modules.tar.gz
         run: |
-          unzip -l server.zip | grep -E "node_modules/(cors|express)/" | head -n 50
+          unzip -l server.zip | grep -E "node_modules\.tar\.gz" -n
 
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
@@ -99,15 +107,12 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
+          # Apply Node version setting immediately
+          az webapp restart --name reactTable --resource-group reactweb
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: "reactTable"
           slot-name: "Production"
           package: server.zip
-
-      - name: Verify server runtime deps exist
-        run: |
-         test -d server/node_modules/cors
-         test -d server/node_modules/express
-         test -d server/node_modules/@databricks/sql
