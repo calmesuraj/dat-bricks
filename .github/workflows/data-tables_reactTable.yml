@@ -14,44 +14,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
-      - name: Install dependencies (monorepo)
+      - name: Install monorepo dependencies
         run: npm install
 
-      - name: Build server (TypeScript -> dist)
+      - name: Build server
         run: npm run build -w server
 
-      - name: Build client (Vite -> client/dist)
+      - name: Build client
         run: npm run build -w client
 
-      - name: Copy client dist into server/public
+      - name: Copy client build into server/public
         run: |
           rm -rf server/public
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Force a real prod install into server/node_modules (no workspace hoisting)
-      - name: Install server production deps into server/node_modules
+      # Force production install directly into server/node_modules
+      - name: Install server production dependencies
         run: |
           rm -rf server/node_modules
           npm install --omit=dev --prefix server --workspaces=false
-          ls -d server/node_modules/cors
+
+          echo "Verify dependencies exist:"
           ls -d server/node_modules/express
+          ls -d server/node_modules/cors
           ls -d server/node_modules/@databricks/sql
 
-      # Zip server INCLUDING node_modules (reliable on App Service)
-      - name: Create deployment zip (server includes node_modules)
+      # Make sure no tarball interferes
+      - name: Remove any node_modules.tar.gz
+        run: rm -f server/node_modules.tar.gz
+
+      # Create zip INCLUDING node_modules
+      - name: Create deployment zip
         run: |
           cd server
           zip -r ../server.zip .
           cd ..
 
-      - name: Upload artifact for deployment
+      # Proof the zip contains dependencies
+      - name: Verify zip contains dependencies
+        run: |
+          unzip -l server.zip | grep "node_modules/cors" | head -n 5
+          unzip -l server.zip | grep "node_modules/express" | head -n 5
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: server-zip
@@ -71,14 +82,14 @@ jobs:
         with:
           name: server-zip
 
-      - name: Login to Azure (OIDC)
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Configure App Settings + Startup Command
+      - name: Configure App Settings
         run: |
           az webapp config appsettings set \
             --name reactTable \
@@ -94,7 +105,9 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
-          az webapp restart --name reactTable --resource-group reactweb
+          az webapp restart \
+            --name reactTable \
+            --resource-group reactweb
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
