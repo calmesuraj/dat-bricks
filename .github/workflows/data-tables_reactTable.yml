@@ -89,6 +89,14 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Show target webapp info
+        run: |
+          az webapp show \
+            --name reactTable \
+            --resource-group reactweb \
+            --query "{name:name, state:state, hostNames:hostNames}" \
+            -o json
+
       - name: Configure App Settings
         run: |
           az webapp config appsettings set \
