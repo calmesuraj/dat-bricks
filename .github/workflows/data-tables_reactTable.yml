@@ -18,31 +18,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          # (optional) keep cache; remove it if you want zero variability while debugging
           cache: "npm"
 
-      # IMPORTANT: use npm install (not npm ci) to avoid lockfile sync failures
+      # Use npm install (not npm ci) because your lockfile is not stable/synced yet
       - name: Install dependencies (monorepo)
         run: npm install
 
-        
-      - name: "Debug: show node_modules contents"
-        run: |
-          echo "Listing node_modules..."
-          ls -la node_modules | head -n 50 
-
-      - name: confirm runtime deps exist in root node_modules
-        run: |
-          echo "Check folders directly:"
-          ls -d node_modules/cors node_modules/express node_modules/@databricks/sql
-
-          echo "Check npm resolution:"
-          node -e "console.log('express ->', require.resolve('express'))"
-          node -e "console.log('cors ->', require.resolve('cors'))"
-
-          
-      # Diagnostic: shows if npm had to modify package-lock.json in CI
-      - name: Show lockfile diff (diagnostic)
+      # Optional: show if npm modified package-lock.json in CI
+      - name: Lockfile diagnostic
         run: |
           git status --porcelain
           git diff -- package-lock.json || true
@@ -59,23 +42,29 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Remove dev deps AFTER building so the production node_modules is smaller
-      - name: Prune to production deps (workspace root)
-        run: npm prune --omit=dev
+      # CRITICAL: install production deps INSIDE server/ so server/node_modules has express/cors/@databricks/sql
+      # (Root node_modules may not contain express in your workspace layout)
+      - name: Install server production dependencies (in server folder)
+        run: |
+          cd server
+          rm -rf node_modules
+          npm install --omit=dev
+          test -d node_modules/express
+          test -d node_modules/cors
+          test -d node_modules/@databricks/sql
+          cd ..
 
-      # App Service on Linux auto-extracts node_modules.tar.gz at startup (you saw this in logs)
-      - name: Create node_modules.tar.gz for App Service
+      # App Service on Linux auto-extracts node_modules.tar.gz at startup (your logs show this)
+      - name: Create node_modules.tar.gz for App Service (from server)
         run: |
           rm -f server/node_modules.tar.gz
-          tar -czf server/node_modules.tar.gz node_modules
+          tar -czf server/node_modules.tar.gz -C server node_modules
           test -f server/node_modules.tar.gz
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express($|/)" -m 1
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors($|/)" -m 1
+          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql($|/)" -m 1
 
-          # Sanity check tarball contains runtime deps
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/express/" -m 1
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/cors/" -m 1
-          tar -tzf server/node_modules.tar.gz | grep -E "^node_modules/@databricks/sql/" -m 1
-
-      # Zip the server app; exclude any node_modules dir (we only need node_modules.tar.gz)
+      # Zip the server app; exclude node_modules directory (we only need node_modules.tar.gz)
       - name: Create deployment zip (server)
         run: |
           cd server
@@ -129,7 +118,6 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
-          # Apply settings immediately
           az webapp restart --name reactTable --resource-group reactweb
 
       - name: Deploy to Azure Web App
