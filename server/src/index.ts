@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
-import { ENV } from './env'
-import { runQuery } from './databricks'
+import { ENV } from './env.js'
+import { runQuery } from './databricks.js'
 
 process.on('unhandledRejection', (e) => {
   console.error('[UNHANDLED REJECTION]', e)
