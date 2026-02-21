@@ -18,7 +18,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
+      # Use npm install (not npm ci) until your lockfile is fully stable
       - name: Install monorepo dependencies
         run: npm install
 
@@ -34,33 +36,40 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Force production install directly into server/node_modules
-      - name: Install server production dependencies
+      # Install runtime deps directly into server/node_modules (avoid workspace hoisting)
+      - name: Install server production dependencies into server/
         run: |
           rm -rf server/node_modules
           npm install --omit=dev --prefix server --workspaces=false
 
-          echo "Verify dependencies exist:"
-          ls -d server/node_modules/express
+          echo "Verify server runtime deps exist:"
           ls -d server/node_modules/cors
+          ls -d server/node_modules/express
           ls -d server/node_modules/@databricks/sql
 
-      # Make sure no tarball interferes
-      - name: Remove any node_modules.tar.gz
-        run: rm -f server/node_modules.tar.gz
-
-      # Create zip INCLUDING node_modules
-      - name: Create deployment zip
+      # IMPORTANT: remove any tarball so App Service doesn't override node_modules
+      - name: Remove any node_modules tarballs from server folder
         run: |
+          rm -f server/node_modules.tar.gz
+          rm -f server/node_modules.zip || true
+
+      # CRITICAL: zip FROM INSIDE server so zip root contains package.json/dist/node_modules/public
+      - name: Create deployment zip (server root)
+        run: |
+          rm -f server.zip
           cd server
           zip -r ../server.zip .
           cd ..
 
-      # Proof the zip contains dependencies
-      - name: Verify zip contains dependencies
+      # Proof: show zip layout (first 30 lines)
+      - name: Show zip root layout (proof)
+        run: unzip -l server.zip | head -n 30
+
+      # Proof: confirm cors exists inside zip
+      - name: Verify zip contains cors + express (proof)
         run: |
-          unzip -l server.zip | grep "node_modules/cors" | head -n 5
-          unzip -l server.zip | grep "node_modules/express" | head -n 5
+          unzip -l server.zip | grep -E "node_modules/cors/" | head -n 5
+          unzip -l server.zip | grep -E "node_modules/express/" | head -n 5
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -89,7 +98,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Show target webapp info
+      # Proof: confirm the exact target site you are deploying to
+      - name: Show target webapp info (proof)
         run: |
           az webapp show \
             --name reactTable \
@@ -97,13 +107,24 @@ jobs:
             --query "{name:name, state:state, hostNames:hostNames}" \
             -o json
 
-      - name: Configure App Settings
+      # IMPORTANT: ensure App Service doesn't use stale tarball-based node_modules from old deployments
+      # If SSH is disabled in your App Service, this step may fail — you can remove it if needed.
+      - name: Remove stale node_modules.tar.gz on server (best-effort)
+        continue-on-error: true
+        run: |
+          az webapp ssh \
+            --name reactTable \
+            --resource-group reactweb \
+            --command "cd /home/site/wwwroot && rm -f node_modules.tar.gz && rm -f node_modules.zip && ls -la | head -n 50"
+
+      - name: Configure App Settings + Startup Command
         run: |
           az webapp config appsettings set \
             --name reactTable \
             --resource-group reactweb \
             --settings \
               SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+              WEBSITE_NODE_DEFAULT_VERSION=20-lts \
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
               DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
@@ -113,13 +134,12 @@ jobs:
             --resource-group reactweb \
             --startup-file "npm start"
 
-          az webapp restart \
-            --name reactTable \
-            --resource-group reactweb
-
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: "reactTable"
           slot-name: "Production"
           package: server.zip
+
+      - name: Restart web app
+        run: az webapp restart --name reactTable --resource-group reactweb
