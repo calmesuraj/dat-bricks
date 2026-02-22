@@ -50,24 +50,14 @@ jobs:
           mkdir -p server/public
           cp -R client/dist/* server/public/
 
-      # Install runtime deps into server/node_modules
-      - name: Install server production dependencies into server/
-        run: |
-          rm -rf server/node_modules
-          npm install --omit=dev --prefix server --workspaces=false
-
-          echo "Verify server runtime deps exist:"
-          ls -d server/node_modules/cors
-          ls -d server/node_modules/express
-          ls -d server/node_modules/@databricks/sql
-
       # IMPORTANT: do NOT deploy .env (use Azure App Settings)
       - name: Remove .env from deployment content
         run: rm -f server/.env
 
-      # Ensure no tarballs are shipped
-      - name: Remove any node_modules tarballs from server folder
+      # Ensure no node_modules artifacts are shipped in zip
+      - name: Remove node_modules and any tarballs from server folder
         run: |
+          rm -rf server/node_modules
           rm -f server/node_modules.tar.gz
           rm -f server/node_modules.zip || true
 
@@ -81,10 +71,13 @@ jobs:
       - name: Show zip root layout (proof)
         run: unzip -l server.zip | head -n 40
 
-      - name: Verify zip contains cors + express (proof)
+      - name: Verify zip does not contain node_modules (proof)
         run: |
-          unzip -l server.zip | grep -E "node_modules/cors/" | head -n 5
-          unzip -l server.zip | grep -E "node_modules/express/" | head -n 5
+          if unzip -l server.zip | grep -q "node_modules/"; then
+            echo "node_modules found in deployment zip (unexpected)"
+            exit 1
+          fi
+          echo "OK: node_modules not present in deployment zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -127,7 +120,7 @@ jobs:
             --name reactTable \
             --resource-group reactweb \
             --settings \
-              SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+              SCM_DO_BUILD_DURING_DEPLOYMENT=true \
               WEBSITE_NODE_DEFAULT_VERSION=20-lts \
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
@@ -148,6 +141,14 @@ jobs:
           app-name: "reactTable"
           slot-name: "Production"
           package: server.zip
+
+      - name: Show deployment log on failure
+        if: failure()
+        run: |
+          az webapp deployment list \
+            --name reactTable \
+            --resource-group reactweb \
+            --query "[0]" -o json || true
 
       - name: Kudu cleanup stale node_modules tarball + verify cors exists
         env:
