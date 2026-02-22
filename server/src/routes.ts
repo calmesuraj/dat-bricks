@@ -1,31 +1,49 @@
-import express from "express";
-import { runQuery } from "./databricks.js";
+import express from 'express'
+import { runDbQuery } from './db.js'
+import { DEFAULT_PROVIDER, type Provider } from './provider.js'
 
-const router = express.Router();
+const router = express.Router()
 
-router.get("/health", (_req, res) => res.json({ ok: true }));
+function normalizeProvider(p: unknown): Provider {
+  const provider = (typeof p === 'string' ? p : '').toLowerCase()
+  if (provider === 'azuresql') return 'azuresql'
+  if (provider === 'databricks') return 'databricks'
+  return DEFAULT_PROVIDER
+}
 
-router.get("/employees", async (_req, res) => {
+router.get('/employees', async (req, res) => {
+  const provider = normalizeProvider(req.query.provider)
+
   try {
-    const rows = await runQuery("SELECT * FROM workspace.demo_db.employees LIMIT 100");
-    res.json({ rows });
-  } catch (e: any) {
-    console.error("[EMPLOYEES ERROR]", e);
-    res.status(500).json({ error: e?.message || "Internal Server Error" });
-  }
-});
+    // NOTE: these SQLs differ per DB, so use the correct one
+    const sql =
+      provider === 'azuresql'
+        ? 'SELECT TOP 100 * FROM dbo.Employees'
+        : 'SELECT * FROM workspace.demo_db.employees LIMIT 100'
 
-router.post("/query", async (req, res) => {
+    const rows = await runDbQuery(sql, provider)
+    return res.json({ provider, rows })
+  } catch (e: any) {
+    console.error(`[EMPLOYEES ERROR] provider=${provider}`, e?.message || e)
+    return res.status(500).json({ provider, error: e?.message || 'Internal Server Error' })
+  }
+})
+
+router.post('/query', async (req, res) => {
+  const provider = normalizeProvider(req.query.provider)
+  const { sql } = req.body || {}
+
+  console.log(`[QUERY] provider=${provider} sql=${sql}`)
+
+  if (!sql) return res.status(400).json({ error: 'Missing sql' })
+
   try {
-    const { sql } = req.body as { sql?: string };
-    if (!sql) return res.status(400).json({ error: "SQL query is required" });
-
-    const rows = await runQuery(sql);
-    res.json({ rows });
+    const rows = await runDbQuery(sql, provider)
+    return res.json({ provider, rows })
   } catch (e: any) {
-    console.error("[QUERY ERROR]", e);
-    res.status(500).json({ error: e?.message || "Failed to execute query" });
+    console.error(`[QUERY ERROR] provider=${provider}`, e?.message || e)
+    return res.status(500).json({ provider, error: e?.message || 'Internal Server Error' })
   }
-});
+})
 
-export default router;
+export default router

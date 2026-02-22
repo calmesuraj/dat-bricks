@@ -131,7 +131,11 @@ jobs:
               WEBSITE_NODE_DEFAULT_VERSION=20-lts \
               DATABRICKS_HOST="${{ secrets.DATABRICKS_HOST }}" \
               DATABRICKS_HTTP_PATH="${{ secrets.DATABRICKS_HTTP_PATH }}" \
-              DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}"
+              DATABRICKS_TOKEN="${{ secrets.DATABRICKS_TOKEN }}" \
+              AZURESQL_SERVER="${{ secrets.AZURESQL_SERVER }}" \
+              AZURESQL_DATABASE="${{ secrets.AZURESQL_DATABASE }}" \
+              AZURESQL_USER="${{ secrets.AZURESQL_USER }}" \
+              AZURESQL_PASSWORD="${{ secrets.AZURESQL_PASSWORD }}"
 
           az webapp config set \
             --name reactTable \

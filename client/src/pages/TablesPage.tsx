@@ -1,17 +1,12 @@
 import React, { useState } from 'react';
 import SQLTable from '../components/SQLTable';
+import { APP_PROVIDER, TABLE_QUERIES } from '../provider';
 import '../styles/TablesPage.css';
 
 const TablesPage: React.FC = () => {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  // List of available tables
-  const tables = [
-    { name: 'employees', query: 'SELECT * FROM workspace.demo_db.employees' },
-    { name: 'departments', query: 'SELECT * FROM workspace.demo_db.department' },
-
-    // Add more tables as needed
-  ];
+  const tables = TABLE_QUERIES[APP_PROVIDER];
 
   return (
     <div className="tables-page">

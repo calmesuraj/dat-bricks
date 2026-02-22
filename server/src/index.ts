@@ -1,7 +1,9 @@
+import 'dotenv/config'
+
 import express, { Request, Response } from 'express'
 import cors from 'cors'
+import routes from './routes.js'
 import { ENV } from './env.js'
-import { runQuery } from './databricks.js'
 
 process.on('unhandledRejection', (e) => {
   console.error('[UNHANDLED REJECTION]', e)
@@ -14,9 +16,17 @@ process.on('uncaughtException', (e) => {
 
 console.log('[BOOT] ENV:', {
   PORT: ENV.PORT,
-  HOST: !!ENV.DATABRICKS_HOSTNAME,
-  PATH: !!ENV.DATABRICKS_HTTP_PATH,
-  TOKEN: !!ENV.DATABRICKS_TOKEN
+  DATABRICKS: {
+    HOST: !!ENV.DATABRICKS_HOSTNAME,
+    PATH: !!ENV.DATABRICKS_HTTP_PATH,
+    TOKEN: !!ENV.DATABRICKS_TOKEN,
+  },
+  AZURESQL: {
+    SERVER: !!ENV.AZURESQL_SERVER,
+    DB: !!ENV.AZURESQL_DATABASE,
+    USER: !!ENV.AZURESQL_USER,
+    PASS: !!ENV.AZURESQL_PASSWORD,
+  },
 })
 
 const app = express()
@@ -25,31 +35,12 @@ app.use(cors())
 
 app.get('/api/health', (_req: Request, res: Response) => res.json({ ok: true }))
 
-app.get('/api/employees', async (_req: Request, res: Response) => {
-  try {
-    const rows = await runQuery('SELECT * FROM workspace.demo_db.employees LIMIT 100')
-    res.json({ rows })
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'Internal Server Error' })
-  }
-})
+// ✅ all query endpoints live here (supports provider flag)
+app.use('/api', routes)
 
-app.post('/api/query', async (req: Request, res: Response) => {
-  try {
-    const { sql } = (req.body || {}) as { sql?: string }
-    if (!sql) return res.status(400).json({ error: 'Missing sql' })
-
-    console.log('[SQL]', sql)
-    const rows = await runQuery(sql)
-    res.json({ rows })
-  } catch (e: any) {
-    console.error('[QUERY ERROR]', e?.message || e)
-    res.status(500).json({ error: e?.message || 'Internal Server Error' })
-  }
-})
-
-const server = app.listen(Number(ENV.PORT) || 8787, () => {
-  console.log(`API on http://localhost:${ENV.PORT || 8787}`)
+const port = Number(ENV.PORT) || 8787
+const server = app.listen(port, () => {
+  console.log(`API on http://localhost:${port}`)
 })
 server.on('error', (err) => {
   console.error('[SERVER LISTEN ERROR]', err)

@@ -1,25 +1,22 @@
-import "dotenv/config";
+import dotenv from "dotenv"
+import path from "path"
+import { fileURLToPath } from "url"
 
-function optional(name: string): string | undefined {
-  const v = process.env[name];
-  return v && v.trim() ? v : undefined;
-}
+// Load default dotenv first, then explicitly load ../.env relative to this file.
+// This makes env loading robust when running from monorepo root via npm workspaces.
+dotenv.config()
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+dotenv.config({ path: path.resolve(__dirname, "../.env") })
 
 export const ENV = {
-  DATABRICKS_HOSTNAME: optional("DATABRICKS_HOST"),
-  DATABRICKS_HTTP_PATH: optional("DATABRICKS_HTTP_PATH"),
-  DATABRICKS_TOKEN: optional("DATABRICKS_TOKEN"),
-  PORT: process.env.PORT || "8080",
-};
+  DATABRICKS_HOSTNAME: process.env.DATABRICKS_HOST || '',
+  DATABRICKS_HTTP_PATH: process.env.DATABRICKS_HTTP_PATH || '',
+  DATABRICKS_TOKEN: process.env.DATABRICKS_TOKEN || '',
 
-// Throw only when you actually need DB settings
-export function requireDatabricksEnv() {
-  if (!ENV.DATABRICKS_HOSTNAME) throw new Error("Missing environment variable: DATABRICKS_HOST");
-  if (!ENV.DATABRICKS_HTTP_PATH) throw new Error("Missing environment variable: DATABRICKS_HTTP_PATH");
-  if (!ENV.DATABRICKS_TOKEN) throw new Error("Missing environment variable: DATABRICKS_TOKEN");
-  return {
-    host: ENV.DATABRICKS_HOSTNAME,
-    path: ENV.DATABRICKS_HTTP_PATH,
-    token: ENV.DATABRICKS_TOKEN,
-  };
+  AZURESQL_SERVER: process.env.AZURESQL_SERVER || '',
+  AZURESQL_DATABASE: process.env.AZURESQL_DATABASE || '',
+  AZURESQL_USER: process.env.AZURESQL_USER || '',
+  AZURESQL_PASSWORD: process.env.AZURESQL_PASSWORD || '',
+
+  PORT: process.env.PORT || '8787',
 }

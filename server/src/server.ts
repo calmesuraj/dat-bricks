@@ -4,6 +4,7 @@ import routes from "./routes.js";
 import { ENV } from "./env.js";
 import path from "path";
 import { fileURLToPath } from "url";
+import 'dotenv/config'
 
 process.on("unhandledRejection", (e) => {
   console.error("[UNHANDLED REJECTION]", e);
